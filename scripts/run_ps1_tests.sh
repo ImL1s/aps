@@ -181,6 +181,14 @@ else
     echo -e "[ ${GREEN}BUILD SUCCESS${NC} ] Cargo release binary ready."
     if [[ -f "${PROJECT_ROOT}/target/release/aps.exe" ]]; then
       TARGET_BIN="${PROJECT_ROOT}/target/release/aps.exe"
+    elif [[ "$(uname)" == "Darwin" ]]; then
+      brew_prefix="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
+      if [[ -d "${brew_prefix}/lib" ]]; then
+        install_name_tool -add_rpath "${brew_prefix}/lib" "${TARGET_BIN}" 2>/dev/null || true
+      fi
+      if [[ -d "/usr/local/lib" ]]; then
+        install_name_tool -add_rpath "/usr/local/lib" "${TARGET_BIN}" 2>/dev/null || true
+      fi
     fi
   else
     echo -e "${RED}[ ERROR ] Cargo release build failed.${NC}" >&2
