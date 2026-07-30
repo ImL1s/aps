@@ -570,3 +570,122 @@ fn test_rfe_nested_exceptions() {
         "Second RFE pop failed to restore original User mode (KUc=1, IEc=1)"
     );
 }
+
+#[test]
+fn test_unaligned_pc_fetch_exception() {
+    let mut bus = MockBus::new();
+    let mut cpu = Cpu::new();
+
+    // Set PC to unaligned address 0x8000_0001
+    cpu.pc = 0x8000_0001;
+    cpu.cop0.status = 0x0040_0000; // BEV = 1
+
+    cpu.step(&mut bus);
+
+    assert_eq!(
+        cpu.cop0.badvaddr, 0x8000_0001,
+        "BadVAddr must equal unaligned PC"
+    );
+    assert_eq!(
+        cpu.cop0.cause_exc_code(),
+        ExceptionCode::AddressErrorLoad as u32,
+        "ExcCode must be AddressErrorLoad"
+    );
+    assert_eq!(cpu.cop0.epc, 0x8000_0001, "EPC must equal unaligned PC");
+    assert_eq!(cpu.cop0.cause & 0x8000_0000, 0, "Cause.BD must be 0");
+    assert_eq!(cpu.pc, 0xBFC0_0180, "PC must vector to 0xBFC0_0180");
+}
+
+#[test]
+fn test_unaligned_lh_lhu_sh_exceptions() {
+    let mut bus = MockBus::new();
+
+    // 1. LH unaligned
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x8000_0000;
+    cpu.gpr[9] = 0x8000_1001;
+    bus.load_code(0x8000_0000, &0x85280000u32.to_le_bytes()); // LH $r8, 0($r9)
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.cop0.cause_exc_code(),
+        ExceptionCode::AddressErrorLoad as u32
+    );
+    assert_eq!(cpu.cop0.badvaddr, 0x8000_1001);
+
+    // 2. LHU unaligned
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x8000_0000;
+    cpu.gpr[9] = 0x8000_1003;
+    bus.load_code(0x8000_0000, &0x95280000u32.to_le_bytes()); // LHU $r8, 0($r9)
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.cop0.cause_exc_code(),
+        ExceptionCode::AddressErrorLoad as u32
+    );
+    assert_eq!(cpu.cop0.badvaddr, 0x8000_1003);
+
+    // 3. SH unaligned
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x8000_0000;
+    cpu.gpr[9] = 0x8000_1001;
+    bus.load_code(0x8000_0000, &0xA5280000u32.to_le_bytes()); // SH $r8, 0($r9)
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.cop0.cause_exc_code(),
+        ExceptionCode::AddressErrorStore as u32
+    );
+    assert_eq!(cpu.cop0.badvaddr, 0x8000_1001);
+}
+
+#[test]
+fn test_direct_unaligned_sw_exception() {
+    let mut bus = MockBus::new();
+
+    for offset in [1u32, 2, 3] {
+        let mut cpu = Cpu::new();
+        cpu.pc = 0x8000_0000;
+        let unaligned_addr = 0x8000_1000 + offset;
+        cpu.gpr[9] = unaligned_addr;
+        bus.load_code(0x8000_0000, &0xAD280000u32.to_le_bytes()); // SW $r8, 0($r9)
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.cop0.cause_exc_code(),
+            ExceptionCode::AddressErrorStore as u32,
+            "SW at offset {offset} must trigger AddressErrorStore"
+        );
+        assert_eq!(
+            cpu.cop0.badvaddr, unaligned_addr,
+            "BadVAddr must match unaligned store address at offset {offset}"
+        );
+        assert_eq!(cpu.cop0.epc, 0x8000_0000);
+        assert_eq!(cpu.cop0.cause & 0x8000_0000, 0);
+    }
+}
+
+#[test]
+fn test_jump_to_unaligned_pc_fetch_exception() {
+    let mut bus = MockBus::new();
+    let mut cpu = Cpu::new();
+
+    cpu.pc = 0x8000_0000;
+    cpu.gpr[31] = 0x8000_0005; // Unaligned jump target address
+
+    // 0x8000_0000: JR $r31 (0x03E00008)
+    // 0x8000_0004: NOP      (0x00000000)
+    bus.load_code(0x8000_0000, &0x03E00008u32.to_le_bytes());
+    bus.load_code(0x8000_0004, &0x00000000u32.to_le_bytes());
+
+    cpu.step(&mut bus); // Execute JR $r31
+    cpu.step(&mut bus); // Execute NOP in delay slot
+    cpu.step(&mut bus); // Attempt PC fetch at 0x8000_0005 -> Exception!
+
+    assert_eq!(cpu.cop0.badvaddr, 0x8000_0005);
+    assert_eq!(
+        cpu.cop0.cause_exc_code(),
+        ExceptionCode::AddressErrorLoad as u32
+    );
+    assert_eq!(cpu.cop0.epc, 0x8000_0005);
+    assert_eq!(cpu.cop0.cause & 0x8000_0000, 0);
+    assert_eq!(cpu.pc, 0xBFC0_0180);
+}

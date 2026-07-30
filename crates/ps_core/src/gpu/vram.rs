@@ -15,7 +15,7 @@ impl Default for VRam {
         let boxed_slice = vec.into_boxed_slice();
         let boxed_array: Box<[u16; VRAM_TOTAL_PIXELS]> = boxed_slice
             .try_into()
-            .unwrap_or_else(|_| panic!("Failed to allocate VRAM buffer"));
+            .expect("Failed to allocate VRAM buffer");
         Self {
             buffer: boxed_array,
         }

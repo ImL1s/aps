@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use ps_core::system::PS1System;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;

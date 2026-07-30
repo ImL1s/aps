@@ -1,6 +1,5 @@
 pub mod cop0;
 pub mod decoder;
-pub mod registers;
 
 use crate::bus::Bus;
 pub use cop0::{Cop0, Exception, ExceptionCode};

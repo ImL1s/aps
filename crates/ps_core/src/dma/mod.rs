@@ -128,7 +128,13 @@ impl DmaController {
                     if channel.sync_mode() == 2 {
                         // Linked List Mode
                         let mut header_addr = channel.madr & 0x001F_FFFF;
+                        let mut node_count: u32 = 0;
                         loop {
+                            node_count += 1;
+                            if node_count > 0x10000 {
+                                break;
+                            }
+
                             let header = ram.read32(header_addr);
                             let count = header >> 24;
                             let next_ptr = header & 0x00FF_FFFF;
@@ -370,5 +376,99 @@ mod tests {
         assert_eq!(ram.read32(0x0FF8), 0x0FF4);
         // 0x0FF4 points to end marker 0x00FFFFFF
         assert_eq!(ram.read32(0x0FF4), 0x00FF_FFFF);
+    }
+
+    #[test]
+    fn test_dma_ch2_linked_list_self_referential_loop() {
+        let mut dma = DmaController::new();
+        let mut ram = Ram::new();
+        let mut gpu = Gpu::new();
+        let mut intc = InterruptController::new();
+
+        dma.dpcr |= 1 << (2 * 4 + 3);
+
+        // Node @ 0x1000: 1 payload word, points back to 0x1000
+        ram.write32(0x1000, (1 << 24) | 0x1000);
+        ram.write32(0x1004, 0xE100_0000);
+
+        dma.channels[2].madr = 0x1000;
+        dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+        let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+        assert!(executed);
+        assert!(!dma.channels[2].is_busy());
+        assert!(!dma.channels[2].is_trigger_set());
+    }
+
+    #[test]
+    fn test_dma_ch2_linked_list_two_node_circular_loop() {
+        let mut dma = DmaController::new();
+        let mut ram = Ram::new();
+        let mut gpu = Gpu::new();
+        let mut intc = InterruptController::new();
+
+        dma.dpcr |= 1 << (2 * 4 + 3);
+
+        // Node A @ 0x1000 -> Node B @ 0x2000
+        ram.write32(0x1000, (1 << 24) | 0x2000);
+        ram.write32(0x1004, 0xE100_0011);
+        // Node B @ 0x2000 -> Node A @ 0x1000
+        ram.write32(0x2000, (1 << 24) | 0x1000);
+        ram.write32(0x2004, 0xE200_0022);
+
+        dma.channels[2].madr = 0x1000;
+        dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+        let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+        assert!(executed);
+        assert!(!dma.channels[2].is_busy());
+        assert!(!dma.channels[2].is_trigger_set());
+    }
+
+    #[test]
+    fn test_dma_ch2_linked_list_zero_payload_circular_loop() {
+        let mut dma = DmaController::new();
+        let mut ram = Ram::new();
+        let mut gpu = Gpu::new();
+        let mut intc = InterruptController::new();
+
+        dma.dpcr |= 1 << (2 * 4 + 3);
+
+        // Node @ 0x3000: 0 payload words, points to 0x3000
+        ram.write32(0x3000, 0x3000);
+
+        dma.channels[2].madr = 0x3000;
+        dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+        let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+        assert!(executed);
+        assert!(!dma.channels[2].is_busy());
+        assert!(!dma.channels[2].is_trigger_set());
+    }
+
+    #[test]
+    fn test_dma_ch2_linked_list_valid_chain_within_limit() {
+        let mut dma = DmaController::new();
+        let mut ram = Ram::new();
+        let mut gpu = Gpu::new();
+        let mut intc = InterruptController::new();
+
+        dma.dpcr |= 1 << (2 * 4 + 3);
+
+        // 3 valid nodes terminating at 0x00FFFFFF
+        ram.write32(0x1000, (1 << 24) | 0x2000);
+        ram.write32(0x1004, 0xE100_0001);
+        ram.write32(0x2000, (1 << 24) | 0x3000);
+        ram.write32(0x2004, 0xE200_0002);
+        ram.write32(0x3000, (1 << 24) | 0x00FF_FFFF);
+        ram.write32(0x3004, 0xE300_0003);
+
+        dma.channels[2].madr = 0x1000;
+        dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+        let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+        assert!(executed);
+        assert_eq!(dma.channels[2].madr, 0x00FF_FFFF);
+        assert!(!dma.channels[2].is_busy());
     }
 }

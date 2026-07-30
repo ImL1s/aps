@@ -437,3 +437,324 @@ fn test_challenger_memory_bus_timer_irq_propagation_to_intc() {
         "CPU IRQ must be asserted on INTC when masked"
     );
 }
+
+// ============================================================================
+// 5. Empirical Stress Tests: DMA Channel 2 Linked List Loop Guard & Boundaries
+// ============================================================================
+
+#[test]
+fn test_challenger_dma_loop_3_node_circular_graph() {
+    let mut dma = DmaController::new();
+    let mut ram = Ram::new();
+    let mut gpu = Gpu::new();
+    let mut intc = InterruptController::new();
+
+    dma.dpcr |= 1 << (2 * 4 + 3);
+
+    // 3-node circular loop: Node A (0x1000) -> Node B (0x2000) -> Node C (0x3000) -> Node A (0x1000)
+    ram.write32(0x1000, (1 << 24) | 0x2000);
+    ram.write32(0x1004, 0xE100_0001);
+    ram.write32(0x2000, (1 << 24) | 0x3000);
+    ram.write32(0x2004, 0xE100_0002);
+    ram.write32(0x3000, (1 << 24) | 0x1000);
+    ram.write32(0x3004, 0xE100_0003);
+
+    dma.channels[2].madr = 0x1000;
+    dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+    let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+    assert!(executed, "DMA step must execute for 3-node circular loop");
+    assert!(
+        !dma.channels[2].is_busy(),
+        "Channel must finish transfer after loop guard breaks"
+    );
+    assert!(
+        !dma.channels[2].is_trigger_set(),
+        "Trigger bit must be cleared"
+    );
+}
+
+#[test]
+fn test_challenger_dma_loop_100_node_circular_graph() {
+    let mut dma = DmaController::new();
+    let mut ram = Ram::new();
+    let mut gpu = Gpu::new();
+    let mut intc = InterruptController::new();
+
+    dma.dpcr |= 1 << (2 * 4 + 3);
+
+    // Build 100-node circular loop: Node i -> Node i+1, Node 99 -> Node 0
+    let base_addr = 0x1000u32;
+    for i in 0..100u32 {
+        let node_addr = base_addr + i * 8;
+        let next_addr = if i == 99 {
+            base_addr
+        } else {
+            base_addr + (i + 1) * 8
+        };
+        ram.write32(node_addr, (1 << 24) | next_addr);
+        ram.write32(node_addr + 4, 0xE100_0000 | i);
+    }
+
+    dma.channels[2].madr = base_addr;
+    dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+    let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+    assert!(executed, "DMA step must execute for 100-node circular loop");
+    assert!(
+        !dma.channels[2].is_busy(),
+        "Channel must not hang on 100-node loop"
+    );
+    assert!(
+        !dma.channels[2].is_trigger_set(),
+        "Trigger bit must be cleared"
+    );
+}
+
+#[test]
+fn test_challenger_dma_loop_self_referential_at_start_middle_end() {
+    // 1) Self-referential loop at start
+    {
+        let mut dma = DmaController::new();
+        let mut ram = Ram::new();
+        let mut gpu = Gpu::new();
+        let mut intc = InterruptController::new();
+        dma.dpcr |= 1 << (2 * 4 + 3);
+
+        ram.write32(0x1000, (1 << 24) | 0x1000);
+        ram.write32(0x1004, 0xE100_0001);
+        dma.channels[2].madr = 0x1000;
+        dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+        let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+        assert!(executed);
+        assert!(!dma.channels[2].is_busy());
+        assert!(!dma.channels[2].is_trigger_set());
+    }
+
+    // 2) Self-referential loop at middle
+    {
+        let mut dma = DmaController::new();
+        let mut ram = Ram::new();
+        let mut gpu = Gpu::new();
+        let mut intc = InterruptController::new();
+        dma.dpcr |= 1 << (2 * 4 + 3);
+
+        ram.write32(0x1000, (1 << 24) | 0x2000);
+        ram.write32(0x1004, 0xE100_0001);
+        ram.write32(0x2000, (1 << 24) | 0x2000); // self-loop at middle
+        ram.write32(0x2004, 0xE100_0002);
+
+        dma.channels[2].madr = 0x1000;
+        dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+        let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+        assert!(executed);
+        assert!(!dma.channels[2].is_busy());
+        assert!(!dma.channels[2].is_trigger_set());
+    }
+
+    // 3) Self-referential loop at end of 5-node chain
+    {
+        let mut dma = DmaController::new();
+        let mut ram = Ram::new();
+        let mut gpu = Gpu::new();
+        let mut intc = InterruptController::new();
+        dma.dpcr |= 1 << (2 * 4 + 3);
+
+        for i in 0..4u32 {
+            let addr = 0x1000 + i * 8;
+            let next = 0x1000 + (i + 1) * 8;
+            ram.write32(addr, (1 << 24) | next);
+            ram.write32(addr + 4, 0xE100_0000 | i);
+        }
+        // Node 4 loops to itself
+        ram.write32(0x1000 + 4 * 8, (1 << 24) | (0x1000 + 4 * 8));
+        ram.write32(0x1000 + 4 * 8 + 4, 0xE100_0004);
+
+        dma.channels[2].madr = 0x1000;
+        dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+        let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+        assert!(executed);
+        assert!(!dma.channels[2].is_busy());
+        assert!(!dma.channels[2].is_trigger_set());
+    }
+}
+
+#[test]
+fn test_challenger_dma_boundary_exactly_65536_nodes() {
+    let mut dma = DmaController::new();
+    let mut ram = Ram::new();
+    let mut gpu = Gpu::new();
+    let mut intc = InterruptController::new();
+
+    dma.dpcr |= 1 << (2 * 4 + 3);
+
+    // Build exactly 65,536 (0x10000) nodes.
+    // Address per node = 0x1000 + i * 4. Each node has 0 payload words, just header with next pointer.
+    // Node 0 .. Node 65534 point to next node.
+    // Node 65535 points to end marker 0x00FFFFFF.
+    let base_addr = 0x1000u32;
+    let total_nodes = 0x10000u32; // 65,536
+
+    for i in 0..total_nodes {
+        let addr = base_addr + i * 4;
+        let next_ptr = if i == total_nodes - 1 {
+            0x00FF_FFFF
+        } else {
+            base_addr + (i + 1) * 4
+        };
+        ram.write32(addr, next_ptr); // 0 payload words, lower 24 bits = next_ptr
+    }
+
+    dma.channels[2].madr = base_addr;
+    dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+    let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+    assert!(executed, "DMA step must execute for 65,536 nodes");
+    assert_eq!(
+        dma.channels[2].madr, 0x00FF_FFFF,
+        "MADR must update to 0x00FFFFFF when exactly 65,536 nodes finish"
+    );
+    assert!(
+        !dma.channels[2].is_busy(),
+        "Channel must finish transfer cleanly"
+    );
+    assert!(
+        !dma.channels[2].is_trigger_set(),
+        "Trigger bit must be cleared"
+    );
+}
+
+#[test]
+fn test_challenger_dma_boundary_65537_nodes_triggers_guard() {
+    let mut dma = DmaController::new();
+    let mut ram = Ram::new();
+    let mut gpu = Gpu::new();
+    let mut intc = InterruptController::new();
+
+    dma.dpcr |= 1 << (2 * 4 + 3);
+
+    // Build 65,537 (0x10001) nodes.
+    // Node 65536 (the 65,537th node) points to 0x00FFFFFF.
+    let base_addr = 0x1000u32;
+    let total_nodes = 0x10001u32; // 65,537
+
+    for i in 0..total_nodes {
+        let addr = base_addr + i * 4;
+        let next_ptr = if i == total_nodes - 1 {
+            0x00FF_FFFF
+        } else {
+            base_addr + (i + 1) * 4
+        };
+        ram.write32(addr, next_ptr);
+    }
+
+    dma.channels[2].madr = base_addr;
+    dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+    let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+    assert!(executed, "DMA step must execute for 65,537 nodes");
+    assert_ne!(
+        dma.channels[2].madr, 0x00FF_FFFF,
+        "MADR must NOT reach 0x00FFFFFF because safety guard breaks on 65,537th node"
+    );
+    assert!(
+        !dma.channels[2].is_busy(),
+        "Channel must break cleanly without hanging"
+    );
+    assert!(
+        !dma.channels[2].is_trigger_set(),
+        "Trigger bit must be cleared"
+    );
+}
+
+#[test]
+fn test_challenger_dma_loop_guard_break_triggers_dicr_irq() {
+    let mut dma = DmaController::new();
+    let mut ram = Ram::new();
+    let mut gpu = Gpu::new();
+    let mut intc = InterruptController::new();
+
+    // Configure DICR: Master Enable (bit 23) + Channel 2 Enable (bit 18)
+    dma.write32(0x1F80_10F4, (1 << 23) | (1 << 18), &mut intc);
+    dma.write32(0x1F80_10F0, 1 << (2 * 4 + 3), &mut intc);
+
+    // Infinite 3-node loop
+    ram.write32(0x1000, (1 << 24) | 0x2000);
+    ram.write32(0x2000, (1 << 24) | 0x3000);
+    ram.write32(0x3000, (1 << 24) | 0x1000);
+
+    dma.channels[2].madr = 0x1000;
+    dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+    let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+    assert!(executed);
+
+    // Verify DICR flags and INTC IRQ_DMA assertion when guard breaks
+    let dicr = dma.read32(0x1F80_10F4);
+    assert_ne!(
+        dicr & (1 << 26),
+        0,
+        "Ch2 IRQ flag (bit 26) must be set when guard breaks"
+    );
+    assert_ne!(
+        dicr & (1 << 31),
+        0,
+        "Master IRQ flag (bit 31) must be set when guard breaks"
+    );
+    assert_ne!(
+        intc.read32(0x1F80_1070) & (1 << IRQ_DMA),
+        0,
+        "IRQ_DMA must be asserted on INTC when guard breaks"
+    );
+}
+
+#[test]
+fn test_challenger_dma_boundary_65537_nodes_triggers_dicr_irq() {
+    let mut dma = DmaController::new();
+    let mut ram = Ram::new();
+    let mut gpu = Gpu::new();
+    let mut intc = InterruptController::new();
+
+    // Configure DICR: Master Enable (bit 23) + Channel 2 Enable (bit 18)
+    dma.write32(0x1F80_10F4, (1 << 23) | (1 << 18), &mut intc);
+    dma.write32(0x1F80_10F0, 1 << (2 * 4 + 3), &mut intc);
+
+    // 65,537 nodes
+    let base_addr = 0x1000u32;
+    let total_nodes = 0x10001u32;
+    for i in 0..total_nodes {
+        let addr = base_addr + i * 4;
+        let next_ptr = if i == total_nodes - 1 {
+            0x00FF_FFFF
+        } else {
+            base_addr + (i + 1) * 4
+        };
+        ram.write32(addr, next_ptr);
+    }
+
+    dma.channels[2].madr = base_addr;
+    dma.channels[2].chcr = (1 << 24) | (2 << 9);
+
+    let executed = dma.step_dma(&mut ram, &mut gpu, &mut intc);
+    assert!(executed);
+
+    let dicr = dma.read32(0x1F80_10F4);
+    assert_ne!(
+        dicr & (1 << 26),
+        0,
+        "Ch2 IRQ flag must fire when 65,537 guard breaks"
+    );
+    assert_ne!(
+        dicr & (1 << 31),
+        0,
+        "Master IRQ flag must fire when 65,537 guard breaks"
+    );
+    assert_ne!(
+        intc.read32(0x1F80_1070) & (1 << IRQ_DMA),
+        0,
+        "IRQ_DMA must be asserted on INTC when 65,537 guard breaks"
+    );
+}
