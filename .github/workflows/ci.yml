@@ -6,6 +6,9 @@ name: CI
   pull_request:
     branches: [ main, master ]
 
+env:
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
 jobs:
   ci:
     name: Build & Test (${{ matrix.os }})
