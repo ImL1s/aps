@@ -1,0 +1,23 @@
+# Build artifacts
+target/
+
+# Agent metadata and workspace directories
+.agents/
+.omc/
+.agy/
+
+# BIOS dumps
+bios/*.bin
+bios/*.BIN
+bios/*.rom
+bios/*.ROM
+
+# ROM test binaries
+tests/roms/*.exe
+tests/roms/*.zip
+
+# OS metadata & temporary files
+.DS_Store
+tty.log
+.octo-continue.md
+*.log

@@ -1,0 +1,18 @@
+[package]
+name = "aps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ps_core = { path = "../ps_core" }
+clap = { version = "4.4", features = ["derive"] }
+env_logger = "0.10"
+log = "0.4"
+sdl2 = { version = "0.36", features = ["use-pkgconfig"] }
+bytemuck = "1.14"
+anyhow = "1.0"
+
+[[test]]
+name = "m3_challenger_frontend_tests"
+path = "../../tests/m3_challenger_frontend_tests.rs"

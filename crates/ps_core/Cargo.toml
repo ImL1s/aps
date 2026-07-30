@@ -1,0 +1,54 @@
+[package]
+name = "ps_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "1.0"
+log = "0.4"
+sdl2 = { version = "0.36", features = ["use-pkgconfig"] }
+
+[dev-dependencies]
+env_logger = "0.10"
+
+[[test]]
+name = "tier1_unit_tests"
+path = "../../tests/tier1_unit_tests.rs"
+
+[[test]]
+name = "tier2_boundary_tests"
+path = "../../tests/tier2_boundary_tests.rs"
+
+[[test]]
+name = "tier3_integration_tests"
+path = "../../tests/tier3_integration_tests.rs"
+
+[[test]]
+name = "tier4_rom_tests"
+path = "../../tests/tier4_rom_tests.rs"
+
+[[test]]
+name = "challenger_unaligned_cop0_tests"
+path = "../../tests/challenger_unaligned_cop0_tests.rs"
+
+[[test]]
+name = "challenger_stress_tests"
+path = "../../tests/challenger_stress_tests.rs"
+
+[[test]]
+name = "m2_challenger_gpu_tests"
+path = "../../tests/m2_challenger_gpu_tests.rs"
+
+[[test]]
+name = "m2_challenger_dma_tests"
+path = "../../tests/m2_challenger_dma_tests.rs"
+
+[[test]]
+name = "m3_challenger_system_tests"
+path = "../../tests/m3_challenger_system_tests.rs"
+
+
+
+
+
