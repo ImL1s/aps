@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-release:
-    name: Build & Release (${{ matrix.target }})
+    name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -50,6 +50,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
+          choco install pkgconfiglite
           vcpkg install sdl2:x64-windows
           echo "VCPKG_ROOT=${VCPKG_INSTALLATION_ROOT}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=${VCPKG_INSTALLATION_ROOT}/installed/x64-windows/lib/pkgconfig" >> "$GITHUB_ENV"
@@ -81,9 +82,28 @@ jobs:
           Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/SDL2.dll" -Destination "staging/"
           Compress-Archive -Path "staging/*" -DestinationPath "${{ matrix.archive_name }}" -Force
 
-      - name: Publish Release Artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ matrix.archive_name }}
+
+  publish-release:
+    name: Publish Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Publish Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.archive_name }}
+          files: |
+            aps-*.tar.gz
+            aps-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

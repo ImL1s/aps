@@ -156,7 +156,7 @@ impl Cpu {
         }
 
         // Step 3: Check instruction alignment exception
-        if current_pc % 4 != 0 {
+        if !current_pc.is_multiple_of(4) {
             self.cop0.badvaddr = current_pc;
             let target = self.cop0.trigger_exception(
                 Exception::AddressErrorLoad,
@@ -439,12 +439,12 @@ impl Cpu {
             Instruction::Divu { rs, rt } => {
                 let num = self.gpr[rs];
                 let denom = self.gpr[rt];
-                if denom == 0 {
+                if let Some(lo) = num.checked_div(denom) {
+                    self.lo = lo;
+                    self.hi = num % denom;
+                } else {
                     self.hi = num;
                     self.lo = 0xFFFF_FFFF;
-                } else {
-                    self.lo = num / denom;
-                    self.hi = num % denom;
                 }
             }
             Instruction::Mfhi { rd } => {
@@ -607,7 +607,7 @@ impl Cpu {
             }
             Instruction::Lh { rs, rt, imm16 } => {
                 let addr = self.gpr[rs].wrapping_add(sign_ext(imm16));
-                if addr % 2 != 0 {
+                if !addr.is_multiple_of(2) {
                     self.cop0.badvaddr = addr;
                     let target = self.cop0.trigger_exception(
                         Exception::AddressErrorLoad,
@@ -625,7 +625,7 @@ impl Cpu {
             }
             Instruction::Lhu { rs, rt, imm16 } => {
                 let addr = self.gpr[rs].wrapping_add(sign_ext(imm16));
-                if addr % 2 != 0 {
+                if !addr.is_multiple_of(2) {
                     self.cop0.badvaddr = addr;
                     let target = self.cop0.trigger_exception(
                         Exception::AddressErrorLoad,
@@ -643,7 +643,7 @@ impl Cpu {
             }
             Instruction::Lw { rs, rt, imm16 } => {
                 let addr = self.gpr[rs].wrapping_add(sign_ext(imm16));
-                if addr % 4 != 0 {
+                if !addr.is_multiple_of(4) {
                     self.cop0.badvaddr = addr;
                     let target = self.cop0.trigger_exception(
                         Exception::AddressErrorLoad,
@@ -697,7 +697,7 @@ impl Cpu {
             }
             Instruction::Sh { rs, rt, imm16 } => {
                 let addr = self.gpr[rs].wrapping_add(sign_ext(imm16));
-                if addr % 2 != 0 {
+                if !addr.is_multiple_of(2) {
                     self.cop0.badvaddr = addr;
                     let target = self.cop0.trigger_exception(
                         Exception::AddressErrorStore,
@@ -714,7 +714,7 @@ impl Cpu {
             }
             Instruction::Sw { rs, rt, imm16 } => {
                 let addr = self.gpr[rs].wrapping_add(sign_ext(imm16));
-                if addr % 4 != 0 {
+                if !addr.is_multiple_of(4) {
                     self.cop0.badvaddr = addr;
                     let target = self.cop0.trigger_exception(
                         Exception::AddressErrorStore,
